@@ -807,29 +807,22 @@ class NPUModelRunner(LoRAModelRunnerMixin):
         if self.dp_size == 1:
             return num_tokens, None, with_prefill, enable_dbo
 
-        # Sync num_tokens, with_prefill, enable_dbo across dp ranks
-        num_tokens_tensor = torch.tensor([
-            num_tokens if i == self.dp_rank else 0 for i in range(self.dp_size)
-        ],
-                                         dtype=torch.int32,
-                                         device="npu")
+        # Prepare local forward metadata
+        local_forward_metadata = torch.tensor(
+            [num_tokens, int(with_prefill), int(enable_dbo)],
+            device="npu",
+            dtype=torch.int32
+        )
 
-        flags_tensor = torch.tensor(
-            [int(with_prefill), int(not enable_dbo)],
-            dtype=torch.int32,
-            device="npu")
+        # Gather metadata across dp ranks
+        global_forward_metadata = get_dp_group().all_gather(
+            local_forward_metadata, dim=0)
 
-        packed_tensor = torch.cat([num_tokens_tensor, flags_tensor])
-
-        dist.all_reduce(packed_tensor, group=get_dp_group().device_group)
-
-        # Unpack the results
-        num_tokens_across_dp = packed_tensor[:-2]
-        synced_flags = packed_tensor[-2:]
+        num_tokens_across_dp = global_forward_metadata[:, 0].cpu()
+        global_with_prefill = bool(global_forward_metadata[:, 1].any())
+        global_enable_dbo = bool(global_forward_metadata[:, 2].any())
 
         max_tokens_across_dp = torch.max(num_tokens_across_dp).item()
-        global_with_prefill = bool(synced_flags[0])
-        global_enable_dbo = not bool(synced_flags[1])
 
         # Create a tensor for num_tokens_after_padding
         num_tokens_after_padding = torch.tensor([max_tokens_across_dp] *
