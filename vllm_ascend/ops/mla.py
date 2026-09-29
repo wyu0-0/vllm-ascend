@@ -64,6 +64,30 @@ class IndexerWrapper(nn.Module):
 
 
 class AscendMultiHeadLatentAttention(MultiHeadLatentAttentionWrapper):
+    @property
+    def skip_topk(self) -> bool:
+        return self.__dict__.get("_skip_topk", False)
+
+    @skip_topk.setter
+    def skip_topk(self, value: bool) -> None:
+        self.__dict__["_skip_topk"] = bool(value)
+        impl = getattr(getattr(self, "mla_attn", None), "impl", None)
+        if impl is not None and hasattr(impl, "skip_topk"):
+            impl.skip_topk = self.__dict__["_skip_topk"]
+
+    @property
+    def topk_indices_buffer(self) -> torch.Tensor | None:
+        impl = getattr(getattr(self, "mla_attn", None), "impl", None)
+        if impl is None:
+            return None
+        return getattr(impl, "topk_indices_buffer", None)
+
+    @topk_indices_buffer.setter
+    def topk_indices_buffer(self, value: torch.Tensor | None) -> None:
+        impl = getattr(getattr(self, "mla_attn", None), "impl", None)
+        if impl is not None and hasattr(impl, "topk_indices_buffer"):
+            impl.topk_indices_buffer = value
+
     def __init__(
         self,
         hidden_size: int,
